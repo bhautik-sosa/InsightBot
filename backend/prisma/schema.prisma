@@ -1,0 +1,455 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql" // Change to: mysql, sqlserver, sqlite, mongodb as needed
+}
+
+enum LoanStatus {
+  InProcess
+  Active
+  Rejected
+  Accepted
+  Complete
+}
+
+enum TransactionStatus {
+  INITIALIZED
+  COMPLETED
+  FAILED
+}
+
+enum TransactionType {
+  EMIPAY
+  FULLPAY
+  PARTPAY
+  REFUND
+}
+
+enum PayType {
+  EMIPAY
+  FULLPAY
+}
+
+enum PaymentStatus {
+  UNPAID // 0
+  PAID // 1
+}
+
+enum ConsentMode {
+  CAMS
+  BANKINGPRO
+  IGNOSIS
+  NETBANKING
+}
+
+// ============================================================================
+// MODEL 1: LoanTransaction
+// ============================================================================
+// Description: Stores loan application and transaction records
+// Records: 120 rows
+// ============================================================================
+
+model LoanTransaction {
+  // Primary Key
+  id Int @id @default(autoincrement())
+
+  // User Information
+  userId String @db.Uuid // UUID format
+
+  // Loan Status and Details
+  loanStatus           LoanStatus
+  netApprovedAmount    Decimal?   @db.Decimal(12, 2)
+  loanDisbursementDate DateTime?  @map("loan_disbursement_date") @db.Timestamptz
+
+  // Rejection/Decline Information
+  remark            String? @db.VarChar(500)
+  userReasonDecline String? @db.VarChar(500)
+
+  // Banking Reference
+  bankingId Int?
+
+  // Audit Fields
+  createdAt DateTime @default(now()) @db.Timestamptz
+
+  // Relations
+  bankingEntities     BankingEntity[]
+  emiEntities         EmiEntity[]
+  transactionEntities TransactionEntity[]
+
+  // Indexes
+  @@index([userId])
+  @@index([loanStatus])
+  @@index([bankingId])
+  @@index([createdAt])
+  @@map("loan_transactions")
+}
+
+// ============================================================================
+// MODEL 2: BankingEntity
+// ============================================================================
+// Description: Stores banking verification and salary information for loans
+// Records: 83 rows
+// ============================================================================
+
+model BankingEntity {
+  // Primary Key
+  id Int @id @default(autoincrement())
+
+  // Banking Information
+  mandateBank      String @db.VarChar(50)
+  disbursementBank String @db.VarChar(50)
+
+  // Salary Information
+  salary                 Decimal?  @db.Decimal(12, 2)
+  salaryDate             Int?
+  salaryVerification     Int
+  salaryVerificationDate DateTime? @db.Timestamptz
+  adminSalary            Decimal?  @db.Decimal(12, 2)
+
+  // Processing Information
+  attempts     Int
+  adminId      Int
+  rejectReason String? @db.VarChar(500)
+  status       String? @db.VarChar(50)
+
+  // User and Loan References
+  userId String @db.Uuid
+  loanId Int
+
+  // Consent Information
+  consentMode ConsentMode?
+
+  // Statement Period
+  stmtStartDate DateTime? @db.Timestamptz
+  stmtEndDate   DateTime? @db.Timestamptz
+
+  // Audit Fields
+  createdAt DateTime @default(now()) @db.Timestamptz
+  updatedAt DateTime @updatedAt @db.Timestamptz
+
+  // Relations
+  loanTransaction LoanTransaction @relation(fields: [loanId], references: [id])
+
+  // Indexes
+  @@index([userId])
+  @@index([loanId])
+  @@index([mandateBank])
+  @@index([adminId])
+  @@index([createdAt])
+  @@map("banking_entities")
+}
+
+// ============================================================================
+// MODEL 3: TransactionEntity
+// ============================================================================
+// Description: Stores EMI payment transactions and payment details
+// Records: 141 rows
+// ============================================================================
+
+model TransactionEntity {
+  // Primary Key
+  id Int @id @default(autoincrement())
+
+  // Payment Information
+  paidAmount     Int
+  status         TransactionStatus
+  completionDate DateTime?         @db.Timestamptz
+  type           TransactionType
+  paymentTime    DateTime?         @db.Timestamptz
+
+  // User and Loan References
+  userId String @db.Uuid
+  loanId Int
+  emiId  Int?
+
+  // Payment Breakdown
+  principalAmount Int
+  interestAmount  Int
+  feesIncome      Int
+
+  // Subscription Information
+  subscriptionDate DateTime? @db.Timestamptz
+
+  // Risk Metrics
+  maxDPD Int @map("max_dpd") // Maximum Days Past Due
+
+  // Audit Fields
+  createdAt DateTime @default(now()) @db.Timestamptz
+  updatedAt DateTime @updatedAt @db.Timestamptz
+
+  // Relations
+  loanTransaction LoanTransaction @relation(fields: [loanId], references: [id])
+  emiEntity       EmiEntity?      @relation(fields: [emiId], references: [id])
+
+  // Indexes
+  @@index([userId])
+  @@index([loanId])
+  @@index([emiId])
+  @@index([status])
+  @@index([type])
+  @@index([createdAt])
+  @@index([completionDate])
+  @@map("transaction_entities")
+}
+
+// ============================================================================
+// MODEL 4: EmiEntity
+// ============================================================================
+// Description: Stores EMI (Equated Monthly Installment) schedule and payments
+// Records: 85 rows
+// ============================================================================
+
+model EmiEntity {
+  // Primary Key
+  id Int @id @default(autoincrement())
+
+  // EMI Schedule Information
+  emiDate         DateTime  @map("emi_date") @db.Timestamptz
+  emiNumber       Int
+  paymentDoneDate DateTime? @map("payment_done_date") @db.Timestamptz
+  paymentStatus   Int // 0=unpaid, 1=paid
+
+  // Loan and User References
+  loanId Int
+  userId String @db.Uuid
+
+  // EMI Amount Breakdown
+  principalCovered  Int
+  interestCalculate Int
+
+  // Payment Details
+  payType       PayType?
+  paidPrincipal Decimal? @map("paid_principal") @db.Decimal(12, 2)
+  paidInterest  Decimal? @map("paid_interest") @db.Decimal(12, 2)
+  delayAmount   Decimal  @db.Decimal(12, 2)
+
+  // Audit Fields
+  createdAt DateTime @default(now()) @db.Timestamptz
+
+  // Relations
+  loanTransaction     LoanTransaction     @relation(fields: [loanId], references: [id])
+  transactionEntities TransactionEntity[]
+
+  // Indexes
+  @@index([userId])
+  @@index([loanId])
+  @@index([emiDate])
+  @@index([paymentStatus])
+  @@index([createdAt])
+  @@map("emi_entities")
+}
+
+// enum BankName {
+//   KOTAK
+//   AXIS
+//   HDFC
+//   ICICI
+//   SBI
+// }
+
+// ============================================================================
+// USAGE NOTES
+// ============================================================================
+
+/**
+ * SETUP INSTRUCTIONS:
+ * -------------------
+ * 1. Install Prisma:
+ * npm install prisma @prisma/client --save-dev
+ * 2. Initialize Prisma (if not already done):
+ * npx prisma init
+ * 3. Copy this schema to your prisma/schema.prisma file
+ * 4. Set your DATABASE_URL in .env file:
+ * DATABASE_URL="postgresql://user:password@localhost:5432/mydb?schema=public"
+ * 5. Generate Prisma Client:
+ * npx prisma generate
+ * 6. Create migration:
+ * npx prisma migrate dev --name init
+ * 7. Push to database (alternative to migration):
+ * npx prisma db push
+ * DATABASE PROVIDERS:
+ * -------------------
+ * PostgreSQL (recommended for production):
+ * provider = "postgresql"
+ * DATABASE_URL="postgresql://user:password@localhost:5432/dbname"
+ * MySQL:
+ * provider = "mysql"
+ * DATABASE_URL="mysql://user:password@localhost:3306/dbname"
+ * Note: Change @db.Uuid to String @db.VarChar(36)
+ * Change @db.Timestamptz to @db.DateTime
+ * SQL Server:
+ * provider = "sqlserver"
+ * DATABASE_URL="sqlserver://localhost:1433;database=mydb;user=sa;password=pass"
+ * SQLite (for development):
+ * provider = "sqlite"
+ * DATABASE_URL="file:./dev.db"
+ * Note: Remove @db.Uuid, @db.Timestamptz, @db.Decimal specifications
+ * EXAMPLE QUERIES:
+ * ----------------
+ * // Create a new loan transaction
+ * const loan = await prisma.loanTransaction.create({
+ * data: {
+ * userId: "uuid-here",
+ * loanStatus: "PENDING",
+ * netApprovedAmount: 50000.00,
+ * createdAt: new Date(),
+ * },
+ * });
+ * // Get loan with related data
+ * const loanWithDetails = await prisma.loanTransaction.findUnique({
+ * where: { id: 1 },
+ * include: {
+ * bankingEntity: true,
+ * emiEntities: true,
+ * transactionEntities: true,
+ * },
+ * });
+ * // Get all EMIs for a user
+ * const userEmis = await prisma.emiEntity.findMany({
+ * where: { userId: "uuid-here" },
+ * include: {
+ * loanTransaction: true,
+ * transactionEntities: true,
+ * },
+ * orderBy: { emiDate: 'asc' },
+ * });
+ * // Get overdue EMIs
+ * const overdueEmis = await prisma.emiEntity.findMany({
+ * where: {
+ * paymentStatus: 0,
+ * emiDate: {
+ * lt: new Date(),
+ * },
+ * },
+ * include: {
+ * loanTransaction: true,
+ * },
+ * });
+ * // Get transaction statistics
+ * const stats = await prisma.transactionEntity.groupBy({
+ * by: ['status'],
+ * _count: {
+ * id: true,
+ * },
+ * _sum: {
+ * paidAmount: true,
+ * },
+ * });
+ * // Complex query with aggregation
+ * const loanSummary = await prisma.loanTransaction.findMany({
+ * where: {
+ * loanStatus: 'APPROVED',
+ * },
+ * include: {
+ * emiEntities: {
+ * select: {
+ * paymentStatus: true,
+ * principalCovered: true,
+ * interestCalculate: true,
+ * },
+ * },
+ * },
+ * });
+ * TYPESCRIPT TYPES:
+ * -----------------
+ * After running `npx prisma generate`, you'll have access to:
+ * import { PrismaClient, LoanTransaction, EmiEntity } from '@prisma/client'
+ * const prisma = new PrismaClient()
+ * // Typed queries
+ * const loans: LoanTransaction[] = await prisma.loanTransaction.findMany()
+ * // With relations
+ * const loanWithRelations = await prisma.loanTransaction.findUnique({
+ * where: { id: 1 },
+ * include: {
+ * bankingEntity: true,
+ * emiEntities: true,
+ * transactionEntities: true,
+ * },
+ * })
+ * // Type: LoanTransaction & {
+ * //   bankingEntity: BankingEntity | null;
+ * //   emiEntities: EmiEntity[];
+ * //   transactionEntities: TransactionEntity[];
+ * // }
+ * MIGRATIONS:
+ * -----------
+ * // Create a new migration
+ * npx prisma migrate dev --name add_new_field
+ * // Apply pending migrations
+ * npx prisma migrate deploy
+ * // Reset database (caution: deletes all data)
+ * npx prisma migrate reset
+ * // View migration status
+ * npx prisma migrate status
+ * PRISMA STUDIO:
+ * --------------
+ * // Open visual database browser
+ * npx prisma studio
+ * This opens a GUI at http://localhost:5555 where you can view and edit data
+ * SEEDING:
+ * --------
+ * Create prisma/seed.ts:
+ * import { PrismaClient } from '@prisma/client'
+ * const prisma = new PrismaClient()
+ * async function main() {
+ * const loan = await prisma.loanTransaction.create({
+ * data: {
+ * userId: "f0c4dfd5-6fa9-4250-b059-74f42f4da86e",
+ * loanStatus: "APPROVED",
+ * netApprovedAmount: 50000,
+ * createdAt: new Date(),
+ * },
+ * })
+ * console.log({ loan })
+ * }
+ * main()
+ * .catch((e) => console.error(e))
+ * .finally(async () => await prisma.$disconnect())
+ * Add to package.json:
+ * "prisma": {
+ * "seed": "ts-node prisma/seed.ts"
+ * }
+ * Run: npx prisma db seed
+ * BEST PRACTICES:
+ * ---------------
+ * 1. Always use transactions for related operations:
+ * await prisma.$transaction([
+ * prisma.loanTransaction.create({ ... }),
+ * prisma.emiEntity.createMany({ ... }),
+ * ])
+ * 2. Use connection pooling in production:
+ * const prisma = new PrismaClient({
+ * datasources: {
+ * db: {
+ * url: process.env.DATABASE_URL,
+ * },
+ * },
+ * })
+ * 3. Close connections when done:
+ * await prisma.$disconnect()
+ * 4. Use select for large datasets:
+ * const loans = await prisma.loanTransaction.findMany({
+ * select: {
+ * id: true,
+ * userId: true,
+ * loanStatus: true,
+ * },
+ * })
+ * 5. Implement soft deletes if needed:
+ * Add: deletedAt DateTime? to models
+ * Filter: where: { deletedAt: null }
+ * PERFORMANCE TIPS:
+ * -----------------
+ * 1. Use indexes (already defined in schema)
+ * 2. Limit result sets with take/skip
+ * 3. Use select to fetch only needed fields
+ * 4. Batch operations with createMany/updateMany
+ * 5. Use raw queries for complex analytics:
+ * const result = await prisma.$queryRaw`
+ * SELECT loan_status, COUNT(*) as count
+ * FROM loan_transactions
+ * GROUP BY loan_status
+ * `
+ */
