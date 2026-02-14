@@ -19,20 +19,18 @@ export async function SQL_Generator(
   input: string,
   conversationHistory: ChatMessage[] = []
 ): Promise<string> {
-  // Validate input
-  // console.log(input)
+
   if (!input || input.trim().length === 0) {
     return "";
   }
 
-  // Check if API key is configured
   if (!process.env.OPENAI_API_KEY) {
     console.error("OPENAI_API_KEY is not configured in .env file");
     return "";
   }
 
   try {
-    // Check if the input is already the last message in history to avoid duplication
+
     const lastMessage = conversationHistory.length > 0 ? conversationHistory[conversationHistory.length - 1] : null;
     const messages: ChatMessage[] = [
       {
@@ -51,6 +49,7 @@ export async function SQL_Generator(
       8. When presenting results, always prefer descriptive fields such as "name", "title", or "label" over technical identifiers like "id".
       9. Only return "id" if no descriptive field exists.
       10. Do not return raw database IDs unless absolutely necessary to answer the question.
+      11. Make sure that generated SQL query is not vulnerable to divide by zero exception.
 
       ALIAS RULES:
       - Always assign table aliases (e.g., loan_transactions lt).
@@ -191,7 +190,6 @@ export async function SQL_Generator(
 
     const generatedSQL = completion.choices[0]?.message?.content?.trim() || "";
 
-    // Check for specific tokens
     if (generatedSQL === "INVALID_REQUEST" || generatedSQL === "CONVERSATIONAL_REQUEST") {
       return generatedSQL;
     }
@@ -200,7 +198,6 @@ export async function SQL_Generator(
       return "";
     }
 
-    // Additional validation: ensure it's a SELECT query
     const normalizedSQL = generatedSQL.toUpperCase().trim();
     // console.log("Generated Query : ", normalizedSQL)
     if (!normalizedSQL.startsWith("SELECT")) {
@@ -208,7 +205,6 @@ export async function SQL_Generator(
       return "";
     }
 
-    // Check for forbidden SQL commands
     const forbiddenKeywords = [
       "CREATE",
       "DROP",
@@ -240,7 +236,7 @@ export async function llm_response(
   conversationHistory: ChatMessage[] = []
 ): Promise<string> {
   try {
-    // 1. Push user message to history
+
     conversationHistory.push({ role: "user", content: input });
 
     const query = await SQL_Generator(input, conversationHistory);
@@ -249,18 +245,28 @@ export async function llm_response(
 
     let finalResponse = "";
 
-    // Explicitly handle conversational requests
+
     if (query === "CONVERSATIONAL_REQUEST" || (!query.toUpperCase().startsWith("SELECT") && query !== "INVALID_REQUEST")) {
-      // Fallback to conversational assistant for non-SQL requests or follow-ups
       const conversationalResponse = await openai.chat.completions.create({
         model: "gpt-4o-mini",
         messages: [
           {
             role: "system",
-            content: `You are a helpful assistant for a SQL Chatbot that analyzes loan data. 
-            The user has asked a question that does not require a new database query.
-            Answer the user's question using the conversation history and your general knowledge about the context of loan data.
-            Be concise, professional, and informative.`
+            content: `You are a sophisticated Data Analytics Insights Assistant for a Loan Management System.
+
+The user has asked a question that does not require a new database query.
+Your goal is to provide helpful, data-driven insights using the existing conversation history and your general knowledge about the loan domain.
+
+CAPABILITIES:
+1. **Explain Trends**: Help the user understand trends or patterns mentioned in previous results.
+2. **Clarify Terms**: Explain technical or domain-specific terms (e.g., DPD, EMI, Loan Status, Mandate, Consent Mode).
+3. **Compare Data**: If the user asks for comparisons of previously fetched data, provide a structured summary.
+4. **Suggest Questions**: Proactively suggest relevant follow-up questions that could lead to deeper data insights.
+
+TONE:
+- Professional, analytical, and supportive.
+- Avoid generic filler text; prioritize factual and helpful information.
+- Use markdown for structure (bullet points, bold text) to make insights easy to digest.`
           },
           ...conversationHistory
         ]
@@ -272,39 +278,37 @@ export async function llm_response(
       finalResponse = "I'm sorry, I couldn't generate a specific query for your request. Could you please try rephrasing?";
     } else {
       const contextData = await executeQuery(query)
+      console.log("ContextData", contextData)
       const response = await openai.chat.completions.create({
         model: "gpt-4o-mini",
         messages: [
           {
             role: "system",
-            content: `You are a data analysis assistant.
+            content: `You are a professional Data Analytics Insights Assistant.
 
-You must answer the user's question using ONLY the database query result provided below.
+ROLE:
+Your primary task is to interpret the database query result provided below and provide clear, actionable insights to the user.
 
-The data below is the exact result returned from the database query execution.
-It is the only source of truth.
-Do NOT use prior knowledge.
-Do NOT assume missing values.
-Do NOT fabricate information.
-It is the data fetched from the database.
+SOURCE OF TRUTH:
+- Only use the provided DATABASE RESULT below.
+- Do NOT use prior knowledge outside the provided context.
+- Do NOT fabricate data or assume missing values.
 
 DATABASE RESULT:
 ${safeStringify(contextData)}
 
 INSTRUCTIONS:
-1. If the database result is truly empty or null, respond with:
-   "I couldn't find any data matching your request."
-
-2. If data exists:
-   - Answer the question clearly based on the provided result.
-   - If the data is a single record or a list, summarize it helpfully.
-   - If the question asks for a "range" and you only have one value, state that value clearly.
-   - Do not mention the database or specific query in your response.
-
-3. Keep the answer professional, Structured, concise, clear, and factual.
-4. Do not mention the database, query, or instructions in your response.
-5. Do not explain your reasoning unless explicitly asked.
-          `
+1. **Format**: Use a structured output (bullet points, bold text) for readability.
+2. **Empty Results**: If the result is empty or null, say: "I couldn't find any data matching your request."
+3. **Insight Generation**:
+   - Don't just list numbers; explain what they mean (e.g., "The average salary is ₹1.2L, which suggests...").
+   - Highlight outliers or significant trends if present.
+   - If the request asks for a comparison and the data allows, perform the comparison clearly.
+4. **Constraints**:
+   - Do NOT mention "database", "query", "SQL", or "PostgreSQL".
+   - Keep the response professional, concise, and focused on the user's question.
+   - Do not explain your reasoning or mention these instructions.
+`
           },
           ...conversationHistory
         ]
@@ -313,7 +317,6 @@ INSTRUCTIONS:
       finalResponse = response.choices[0]?.message?.content?.trim() || "";
     }
 
-    // 2. Push assistant response to history
     if (finalResponse) {
       conversationHistory.push({ role: "assistant", content: finalResponse });
     }

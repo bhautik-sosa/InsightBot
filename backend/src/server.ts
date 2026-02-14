@@ -14,8 +14,6 @@ const PORT = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json());
 
-// Store conversation history (in-memory, for simplicity)
-// In production, use Redis or a database
 interface ConversationMessage {
     role: "system" | "user" | "assistant";
     content: string;
@@ -30,8 +28,6 @@ app.get("/", async (req, res) => {
     res.send("SQL Chatbot API is running!");
 });
 
-
-// POST endpoint for chat (non-streaming alternative)
 app.post("/api/chat", async (req: Request, res: Response) => {
     const { message } = req.body;
     console.log("Body : ", req.body)
@@ -43,7 +39,6 @@ app.post("/api/chat", async (req: Request, res: Response) => {
 
     console.warn("History:  ", history)
     try {
-        // Generate SQL (now with history handled inside llm_response)
         const response = await llm_response(message, history);
         console.log("LLM Response : ", response)
 
@@ -62,9 +57,8 @@ app.post("/api/chat", async (req: Request, res: Response) => {
     }
 });
 
-// Clear conversation history
 app.delete("/api/chat", (req: Request, res: Response) => {
-    history.length = 0; // Clear the array
+    history.length = 0;
     res.json({ success: true, message: "Conversation history cleared" });
 });
 
